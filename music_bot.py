@@ -45,18 +45,22 @@ def save_state(post_id: str):
         writer.writerow([post_id, datetime.now(timezone.utc).isoformat()])
 
 def main():
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "")
-    api_id = os.environ.get("TELEGRAM_API_ID", "")
-    api_hash = os.environ.get("TELEGRAM_API_HASH", "")
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
+    api_id = os.environ.get("TELEGRAM_API_ID", "").strip()
+    api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
+
+    log(f"DEBUG Check -> BOT_TOKEN: {bool(bot_token)}, CHANNEL_ID: {bool(channel_id)}, API_ID: {bool(api_id)}, API_HASH: {bool(api_hash)}")
 
     if not (bot_token and channel_id):
         log("❌ Ошибка: не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHANNEL_ID в Secrets.")
         sys.exit(1)
 
     if not (api_id and api_hash):
-        log("❌ Ошибка: не заданы TELEGRAM_API_ID и TELEGRAM_API_HASH в Secrets GitHub!")
-        log("Добавьте TELEGRAM_API_ID и TELEGRAM_API_HASH в Settings -> Secrets and variables -> Actions.")
+        log("❌ Ошибка: TELEGRAM_API_ID или TELEGRAM_API_HASH пусты в окружении GitHub Actions!")
+        log("Убедитесь, что в .github/workflows/music_bot.yml они переданы в секции env:")
+        log("  TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}")
+        log("  TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}")
         sys.exit(1)
 
     try:
