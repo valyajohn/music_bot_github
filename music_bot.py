@@ -2,12 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 Музыкальный бот-парсер для Telegram каналов (@leaksffm, @novinki_muzyk, @newtracks, @leakspremiere).
-Использует Telethon (MTProto API) для мгновенного чтения и копирования треков.
+Использует интеллектуальный последовательный обход ID через Telegram Bot API (copyMessage).
+Не требует Telethon, API_ID, API_HASH и не зависит от веб-превью Telegram.
 """
 import os
 import sys
 import csv
 import time
+import requests
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -44,74 +46,75 @@ def save_state(post_id: str):
             writer.writerow(["post_id", "upload_date"])
         writer.writerow([post_id, datetime.now(timezone.utc).isoformat()])
 
+def telegram_copy_message(bot_token: str, channel_id: str, from_chat: str, message_id: int):
+    url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
+    data = {
+        "chat_id": channel_id,
+        "from_chat_id": f"@{from_chat}",
+        "message_id": message_id
+    }
+    resp = requests.post(url, json=data, timeout=10)
+    return resp.json()
+
 def main():
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
-    api_id = os.environ.get("TELEGRAM_API_ID", "30429111").strip()
-    api_hash = os.environ.get("TELEGRAM_API_HASH", "6bd0a06fea126ff8a227a21fa7f1d895").strip()
-
-    log(f"DEBUG Check -> BOT_TOKEN: {bool(bot_token)}, CHANNEL_ID: {bool(channel_id)}, API_ID: {bool(api_id)}, API_HASH: {bool(api_hash)}")
 
     if not (bot_token and channel_id):
-        log("❌ Ошибка: не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHANNEL_ID в Secrets.")
+        log("❌ Ошибка: не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHANNEL_ID в Secrets GitHub.")
         sys.exit(1)
 
-    if not (api_id and api_hash):
-        log("❌ Ошибка: TELEGRAM_API_ID или TELEGRAM_API_HASH пусты в окружении GitHub Actions!")
-        log("Убедитесь, что в .github/workflows/music_bot.yml они переданы в секции env:")
-        log("  TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}")
-        log("  TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}")
-        sys.exit(1)
+    uploaded = load_state()
+    published = 0
 
-    try:
-        from telethon import TelegramClient
-        import asyncio
-    except ImportError:
-        log("❌ Библиотека telethon не установлена. Проверьте requirements.txt.")
-        sys.exit(1)
+    log("🚀 Запуск бота в режиме последовательного мониторинга ID через Telegram Bot API...")
 
-    log("🚀 Запуск бота в режиме Telethon (подключение к Telegram API)...")
-
-    async def run_sync():
-        client = TelegramClient('music_bot_session', int(api_id), api_hash)
-        await client.start(bot_token=bot_token)
+    for source in SOURCES:
+        if published >= 5:
+            break
         
-        uploaded = load_state()
-        published = 0
+        # Determine highest known message ID for this source
+        max_id = 0
+        for post_id in uploaded:
+            if post_id.startswith(f"{source}/"):
+                try:
+                    num = int(post_id.split('/')[1])
+                    if num > max_id:
+                        max_id = num
+                except:
+                    pass
+        
+        # If no history yet, start from a recent estimated baseline ID or probe
+        if max_id == 0:
+            max_id = 4500 # Adjust baseline if needed
+            
+        log(f"🔍 Сканирование @{source} начиная с ID {max_id + 1}...")
+        
+        consecutive_not_found = 0
+        # Check next potential new message IDs sequentially
+        for next_id in range(max_id + 1, max_id + 25):
+            if published >= 5:
+                break
+            post_key = f"{source}/{next_id}"
+            if post_key in uploaded:
+                continue
 
-        for source in SOURCES:
-            try:
-                log(f"🔍 Сканирование канала @{source}...")
-                async for message in client.iter_messages(source, limit=15):
-                    if published >= 5:
+            res = telegram_copy_message(bot_token, channel_id, source, next_id)
+            if res.get("ok"):
+                save_state(post_key)
+                published += 1
+                log(f"✅ Успешно скопирован новый трек: {post_key}!")
+                consecutive_not_found = 0
+                time.sleep(2)
+            else:
+                desc = res.get("description", "").lower()
+                if "not found" in desc or "parser" in desc or "chat not found" in desc:
+                    consecutive_not_found += 1
+                    if consecutive_not_found >= 6:
                         break
-                    if not message.id:
-                        continue
-                    
-                    post_key = f"{source}/{message.id}"
-                    if post_key in uploaded:
-                        continue
+                time.sleep(0.2)
 
-                    log(f"🔄 Копирование сообщения {post_key} в {channel_id}...")
-                    try:
-                        await client.forward_messages(channel_id, message)
-                        save_state(post_key)
-                        published += 1
-                        log(f"✅ Успешно скопировано в {channel_id}!")
-                        time.sleep(2)
-                    except Exception as err:
-                        log(f"❌ Ошибка копирования сообщения {post_key}: {err}")
-            except Exception as e:
-                log(f"❌ Ошибка доступа к каналу @{source}: {e}")
-
-        await client.disconnect()
-
-    try:
-        asyncio.run(run_sync())
-        log("🏁 Работа бота успешно завершена.")
-    except Exception as e:
-        log(f"❌ Критическая ошибка выполнения Telethon: {e}")
-        sys.exit(1)
+    log(f"🏁 Работа бота завершена. Успешно скопировано новых треков: {published}")
 
 if __name__ == "__main__":
     main()
