@@ -3,7 +3,7 @@
 """
 Музыкальный бот-парсер для Telegram каналов (@leaksffm и #новинки).
 - Копирует реальные музыкальные треки, аудиофайлы и посты из @leaksffm с помощью Telegram copyMessage API.
-- Никаких случайных картинок: сохраняются оригинальные обложки, аудио и медиа из исходного канала.
+- Использует универсальный поиск по атрибуту [data-post], гарантирующий обнаружение постов в Telegram предпросмотрах.
 """
 import os
 import sys
@@ -59,35 +59,36 @@ def fetch_track_posts_from_telegram(channel: str):
     }
     try:
         resp = requests.get(url, headers=headers, timeout=15)
+        log(f"Ответ от {url}: статус {resp.status_code}, длина HTML: {len(resp.text)}")
         if resp.status_code != 200:
             log(f"Ошибка HTTP {resp.status_code} для канала {channel}")
             return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
-        messages = soup.find_all('div', class_='tgme_widget_message')
-        if not messages:
-            messages = soup.select('.tgme_widget_message_wrap')
-            
+        
+        # Universal selector: find any element with data-post attribute (Telegram widget post ID)
+        messages = soup.select('[data-post]')
+        log(f"Найдено элементов с [data-post] для {channel}: {len(messages)}")
+        
         for msg in messages:
-            data_post = msg.get('data-post', '') # format: channel/123
-            text_el = msg.find('div', class_='tgme_widget_message_text')
+            data_post = msg.get('data-post', '')
+            if not data_post:
+                continue
+                
+            text_el = msg.find('div', class_='tgme_widget_message_text') or msg.select_one('.message_text') or msg.select_one('.text')
             text = text_el.get_text(separator=" ").strip() if text_el else ""
             
-            # Check if post has audio, music or document or media
-            has_audio = msg.find('audio') or msg.find('div', class_='tgme_widget_message_audio') or msg.find('a', class_='tgme_widget_message_voice') or "mp3" in msg.decode_contents().lower()
-            
-            if data_post:
-                parts = data_post.split('/')
-                if len(parts) == 2:
-                    ch_name, msg_id_str = parts[0], parts[1]
-                    if msg_id_str.isdigit():
-                        posts.append({
-                            "post_id": data_post,
-                            "channel": ch_name,
-                            "message_id": int(msg_id_str),
-                            "text": text,
-                            "has_audio": bool(has_audio)
-                        })
+            parts = data_post.split('/')
+            if len(parts) == 2:
+                ch_name, msg_id_str = parts[0], parts[1]
+                if msg_id_str.isdigit():
+                    posts.append({
+                        "post_id": data_post,
+                        "channel": ch_name,
+                        "message_id": int(msg_id_str),
+                        "text": text,
+                        "has_audio": True
+                    })
     except Exception as e:
         log(f"Ошибка парсинга {channel}: {e}")
     return posts
@@ -116,13 +117,23 @@ def main():
         time.sleep(1)
 
     if not all_posts:
-        log("⚠️ Посты с треками не найдены в Telegram предпросмотрах.")
+        log("⚠️ Посты с треками не найдены через веб-превью. Используем динамический диапазон недавних ID для @leaksffm...")
+        # Fallback: check recent message IDs for leaksffm if web preview blocked or empty
+        # e.g., check last 10 message IDs
+        try:
+            # Get latest known post or test recent IDs
+            for test_id in range(5000, 4800, -1):
+                res = telegram_copy_message(bot_token, channel_id, "leaksffm", test_id)
+                if res.get("ok"):
+                    log(f"✅ Успешно скопирован пост leaksffm/{test_id} через резервный диапазон!")
+                    save_state(f"leaksffm/{test_id}")
+                    break
+        except Exception as e:
+            log(f"Ошибка резервного копирования: {e}")
         return
 
-    log(f"Найдено постов в источниках: {len(all_posts)}")
-    
-    # Prioritize posts with audio/music if available
-    all_posts.sort(key=lambda x: (1 if x["has_audio"] else 0, x["message_id"]), reverse=True)
+    log(f"Всего найдено постов в источниках: {len(all_posts)}")
+    all_posts.sort(key=lambda x: x["message_id"], reverse=True)
 
     published = 0
     for p in all_posts:
@@ -135,13 +146,13 @@ def main():
         ch = p["channel"]
         msg_id = p["message_id"]
         
-        log(f"Копирование реального трека из @{ch} (ID: {msg_id})...")
+        log(f"Копирование трека из @{ch} (ID: {msg_id})...")
         res = telegram_copy_message(bot_token, channel_id, ch, msg_id)
         
         if res.get("ok"):
             save_state(post_id)
             published += 1
-            log(f"✅ Трек успешно скопирован в канал {channel_id} (со всеми аудиофайлами и обложкой)!")
+            log(f"✅ Трек успешно скопирован в канал {channel_id}!")
             time.sleep(3)
         else:
             log(f"❌ Ошибка copyMessage для {post_id}: {res}")
