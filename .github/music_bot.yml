@@ -1,0 +1,40 @@
+name: Telegram Music Bot Auto-Poster
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # Запуск каждые 3 часа
+  workflow_dispatch:      # Ручной запуск из вкладки Actions
+
+jobs:
+  run-music-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run Music Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+        run: |
+          python music_bot.py
+
+      - name: Commit state update (if any)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 Auto-update music bot state"
+          file_pattern: "state/music_state.csv"
+          skip_fetch: true
+          skip_checkout: true
