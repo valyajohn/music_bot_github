@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Музыкальный бот-парсер для Telegram каналов (@leaksffm, @novinki_muzyk, @newtracks, @leakspremiere).
-Использует интеллектуальный последовательный обход ID через Telegram Bot API (copyMessage).
-Не требует Telethon, API_ID, API_HASH и не зависит от веб-превью Telegram.
+Использует последовательный обход ID через Telegram Bot API (copyMessage) с защитой от сетевых сбоев и ConnectionResetError.
 """
 import os
 import sys
@@ -53,8 +52,15 @@ def telegram_copy_message(bot_token: str, channel_id: str, from_chat: str, messa
         "from_chat_id": f"@{from_chat}",
         "message_id": message_id
     }
-    resp = requests.post(url, json=data, timeout=10)
-    return resp.json()
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, json=data, timeout=15)
+            return resp.json()
+        except Exception as e:
+            if attempt == 2:
+                return {"ok": False, "description": str(e)}
+            time.sleep(1.5)
+    return {"ok": False}
 
 def main():
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -84,14 +90,12 @@ def main():
                 except:
                     pass
         
-        # If no history yet, start from a recent estimated baseline ID or probe
         if max_id == 0:
-            max_id = 4500 # Adjust baseline if needed
+            max_id = 4500
             
         log(f"🔍 Сканирование @{source} начиная с ID {max_id + 1}...")
         
         consecutive_not_found = 0
-        # Check next potential new message IDs sequentially
         for next_id in range(max_id + 1, max_id + 25):
             if published >= 5:
                 break
@@ -108,11 +112,11 @@ def main():
                 time.sleep(2)
             else:
                 desc = res.get("description", "").lower()
-                if "not found" in desc or "parser" in desc or "chat not found" in desc:
+                if "not found" in desc or "parser" in desc or "chat not found" in desc or "bad request" in desc:
                     consecutive_not_found += 1
                     if consecutive_not_found >= 6:
                         break
-                time.sleep(0.2)
+                time.sleep(0.3)
 
     log(f"🏁 Работа бота завершена. Успешно скопировано новых треков: {published}")
 
