@@ -47,8 +47,8 @@ def save_state(post_id: str):
 def main():
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
-    api_id = os.environ.get("TELEGRAM_API_ID", "").strip()
-    api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
+    api_id = os.environ.get("TELEGRAM_API_ID", "30429111").strip()
+    api_hash = os.environ.get("TELEGRAM_API_HASH", "6bd0a06fea126ff8a227a21fa7f1d895").strip()
 
     log(f"DEBUG Check -> BOT_TOKEN: {bool(bot_token)}, CHANNEL_ID: {bool(channel_id)}, API_ID: {bool(api_id)}, API_HASH: {bool(api_hash)}")
 
