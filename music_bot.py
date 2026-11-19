@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Музыкальный бот-парсер для Telegram каналов (@leaksffm, @novinki_muzyk, @newtracks, @leakspremiere).
-- Парсит свежие треки по всем указанным источникам.
-- Использует несколько надежных методов извлечения ID сообщений (data-post и ссылки на посты).
+- Парсит свежие треки по всем указанным источникам с помощью надежного Regex и BeautifulSoup поиска.
 - Копирует реальные музыкальные треки и аудиофайлы с помощью Telegram copyMessage API.
 """
 import os
@@ -11,6 +10,7 @@ import sys
 import csv
 import json
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 from pathlib import Path
@@ -65,40 +65,45 @@ def fetch_track_posts_from_telegram(channel: str):
             log(f"Ошибка HTTP {resp.status_code} для канала {channel}")
             return []
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Method 1: Find by [data-post]
+        html_text = resp.text
+
+        # Regex patterns to extract all post IDs from raw HTML (data-post and href links)
+        patterns = [
+            rf'data-post=["\']{channel}/(\d+)["\']',
+            rf'href=["\'](?:https?://t\.me|https?://telegram\.me)?/{channel}/(\d+)["\']',
+            rf'href=["\']/{channel}/(\d+)["\']'
+        ]
+
+        for pat in patterns:
+            matches = re.findall(pat, html_text)
+            for m in matches:
+                msg_id_str = m if isinstance(m, str) else (m[0] if isinstance(m, tuple) else "")
+                if msg_id_str and msg_id_str.isdigit():
+                    msg_id = int(msg_id_str)
+                    posts_dict[msg_id] = {
+                        "post_id": f"{channel}/{msg_id}",
+                        "channel": channel,
+                        "message_id": msg_id,
+                        "has_audio": True
+                    }
+
+        # BeautifulSoup fallback
+        soup = BeautifulSoup(html_text, 'html.parser')
         for msg in soup.select('[data-post]'):
             dp = msg.get('data-post', '')
             if dp:
                 parts = dp.split('/')
                 if len(parts) == 2 and parts[1].isdigit():
-                    posts_dict[int(parts[1])] = {
+                    msg_id = int(parts[1])
+                    posts_dict[msg_id] = {
                         "post_id": dp,
                         "channel": parts[0],
-                        "message_id": int(parts[1]),
+                        "message_id": msg_id,
                         "has_audio": True
                     }
 
-        # Method 2: Find by all <a> links matching /{channel}/(\d+) or t.me/{channel}/(\d+)
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if f"/{channel}/" in href:
-                subparts = href.split(f"/{channel}/")
-                if len(subparts) > 1:
-                    num_str = subparts[1].split('/')[0].split('?')[0].split('#')[0]
-                    if num_str.isdigit():
-                        msg_id = int(num_str)
-                        if msg_id not in posts_dict:
-                            posts_dict[msg_id] = {
-                                "post_id": f"{channel}/{msg_id}",
-                                "channel": channel,
-                                "message_id": msg_id,
-                                "has_audio": True
-                            }
-
         results = list(posts_dict.values())
-        log(f"Найдено уникальных постов для @{channel}: {len(results)}")
+        log(f"Найдено уникальных постов через Regex/Soup для @{channel}: {len(results)}")
         return results
 
     except Exception as e:
