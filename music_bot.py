@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Музыкальный бот-парсер для Telegram каналов (@leaksffm и #новинки).
-- Копирует реальные музыкальные треки, аудиофайлы и посты из @leaksffm с помощью Telegram copyMessage API.
-- Использует универсальный поиск по атрибуту [data-post], гарантирующий обнаружение постов в Telegram предпросмотрах.
+Музыкальный бот-парсер для Telegram каналов (@leaksffm, @novinki_muzyk, @newtracks, @leakspremiere).
+- Парсит свежие треки по всем указанным источникам.
+- Использует несколько надежных методов извлечения ID сообщений (data-post и ссылки на посты).
+- Копирует реальные музыкальные треки и аудиофайлы с помощью Telegram copyMessage API.
 """
 import os
 import sys
@@ -50,7 +51,7 @@ def save_state(post_id: str):
 
 def fetch_track_posts_from_telegram(channel: str):
     url = f"https://t.me/s/{channel}"
-    posts = []
+    posts_dict = {}
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -66,32 +67,43 @@ def fetch_track_posts_from_telegram(channel: str):
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # Universal selector: find any element with data-post attribute (Telegram widget post ID)
-        messages = soup.select('[data-post]')
-        log(f"Найдено элементов с [data-post] для {channel}: {len(messages)}")
-        
-        for msg in messages:
-            data_post = msg.get('data-post', '')
-            if not data_post:
-                continue
-                
-            text_el = msg.find('div', class_='tgme_widget_message_text') or msg.select_one('.message_text') or msg.select_one('.text')
-            text = text_el.get_text(separator=" ").strip() if text_el else ""
-            
-            parts = data_post.split('/')
-            if len(parts) == 2:
-                ch_name, msg_id_str = parts[0], parts[1]
-                if msg_id_str.isdigit():
-                    posts.append({
-                        "post_id": data_post,
-                        "channel": ch_name,
-                        "message_id": int(msg_id_str),
-                        "text": text,
+        # Method 1: Find by [data-post]
+        for msg in soup.select('[data-post]'):
+            dp = msg.get('data-post', '')
+            if dp:
+                parts = dp.split('/')
+                if len(parts) == 2 and parts[1].isdigit():
+                    posts_dict[int(parts[1])] = {
+                        "post_id": dp,
+                        "channel": parts[0],
+                        "message_id": int(parts[1]),
                         "has_audio": True
-                    })
+                    }
+
+        # Method 2: Find by all <a> links matching /{channel}/(\d+) or t.me/{channel}/(\d+)
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if f"/{channel}/" in href:
+                subparts = href.split(f"/{channel}/")
+                if len(subparts) > 1:
+                    num_str = subparts[1].split('/')[0].split('?')[0].split('#')[0]
+                    if num_str.isdigit():
+                        msg_id = int(num_str)
+                        if msg_id not in posts_dict:
+                            posts_dict[msg_id] = {
+                                "post_id": f"{channel}/{msg_id}",
+                                "channel": channel,
+                                "message_id": msg_id,
+                                "has_audio": True
+                            }
+
+        results = list(posts_dict.values())
+        log(f"Найдено уникальных постов для @{channel}: {len(results)}")
+        return results
+
     except Exception as e:
         log(f"Ошибка парсинга {channel}: {e}")
-    return posts
+    return []
 
 def telegram_copy_message(bot_token: str, channel_id: str, from_chat: str, message_id: int):
     url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
@@ -112,32 +124,36 @@ def main():
 
     uploaded = load_state()
     all_posts = []
+    
+    # Check all sources
     for s in SOURCES:
-        all_posts.extend(fetch_track_posts_from_telegram(s))
+        log( сканирование источника: @{s} ...)
+        posts = fetch_track_posts_from_telegram(s)
+        all_posts.extend(posts)
         time.sleep(1)
 
     if not all_posts:
-        log("⚠️ Посты с треками не найдены через веб-превью. Используем динамический диапазон недавних ID для @leaksffm...")
-        # Fallback: check recent message IDs for leaksffm if web preview blocked or empty
-        # e.g., check last 10 message IDs
+        log("⚠️ Посты с треками не найдены через веб-превью. Запуск резервного сканирования ID...")
         try:
-            # Get latest known post or test recent IDs
-            for test_id in range(5000, 4800, -1):
-                res = telegram_copy_message(bot_token, channel_id, "leaksffm", test_id)
-                if res.get("ok"):
-                    log(f"✅ Успешно скопирован пост leaksffm/{test_id} через резервный диапазон!")
-                    save_state(f"leaksffm/{test_id}")
-                    break
+            for s in SOURCES:
+                for test_id in range(5000, 4800, -1):
+                    res = telegram_copy_message(bot_token, channel_id, s, test_id)
+                    if res.get("ok"):
+                        log(f"✅ Успешно скопирован пост {s}/{test_id} через резервный сканер!")
+                        save_state(f"{s}/{test_id}")
+                        break
         except Exception as e:
             log(f"Ошибка резервного копирования: {e}")
         return
 
-    log(f"Всего найдено постов в источниках: {len(all_posts)}")
+    log(f"Всего найдено постов во всех источниках: {len(all_posts)}")
+    
+    # Sort by message_id descending so newest posts are processed first
     all_posts.sort(key=lambda x: x["message_id"], reverse=True)
 
     published = 0
     for p in all_posts:
-        if published >= 3:
+        if published >= 5:
             break
         post_id = p["post_id"]
         if post_id in uploaded:
@@ -152,7 +168,7 @@ def main():
         if res.get("ok"):
             save_state(post_id)
             published += 1
-            log(f"✅ Трек успешно скопирован в канал {channel_id}!")
+            log(f"✅ Трек успешно скопирован в канал {channel_id} из @{ch}!")
             time.sleep(3)
         else:
             log(f"❌ Ошибка copyMessage для {post_id}: {res}")
