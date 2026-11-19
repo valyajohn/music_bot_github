@@ -27,20 +27,26 @@ def log(msg: str):
 def load_state():
     uploaded = set()
     if STATE_CSV.exists():
-        with open(STATE_CSV, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                uploaded.add(r["post_id"])
+        try:
+            with open(STATE_CSV, newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if row and len(row) > 0:
+                        val = row[0].strip()
+                        if val and val.lower() not in ("post_id", "filename", "upload_date"):
+                            uploaded.add(val)
+        except Exception as e:
+            log(f"Предупреждение при чтении state: {e}")
     return uploaded
 
 def save_state(post_id: str):
     STATE_DIR.mkdir(exist_ok=True)
-    file_exists = STATE_CSV.exists()
+    file_exists = STATE_CSV.exists() and STATE_CSV.stat().st_size > 0
     with open(STATE_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["post_id", "upload_date"])
+        writer = csv.writer(f)
         if not file_exists:
-            writer.writeheader()
-        writer.writerow({"post_id": post_id, "upload_date": datetime.now(timezone.utc).isoformat()})
+            writer.writerow(["post_id", "upload_date"])
+        writer.writerow([post_id, datetime.now(timezone.utc).isoformat()])
 
 def fetch_track_posts_from_telegram(channel: str):
     url = f"https://t.me/s/{channel}"
