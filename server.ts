@@ -17,18 +17,15 @@ const STATE_DIR = path.resolve(__dirname, 'state');
 const STATE_CSV = path.resolve(STATE_DIR, 'music_state.csv');
 const CONFIG_PATH = path.resolve(__dirname, 'config.json');
 
-// Ensure state dir exists
 if (!fs.existsSync(STATE_DIR)) {
   fs.mkdirSync(STATE_DIR, { recursive: true });
 }
 
-// Default config
 const DEFAULT_CONFIG = {
   interval_hours: 3,
   timezone: "Europe/Moscow",
   telegram_channel_id: "@my_channel_username",
   telegram_bot_token: "",
-  unsplash_access_key: "",
   default_tags: ["music", "новинки", "leaks"]
 };
 
@@ -49,30 +46,6 @@ function saveConfig(cfg: any) {
 
 const SOURCES = ["leaksffm", "novinki_muzyk", "newtracks", "leakspremiere"];
 
-const RU_SLANG_INTROS = [
-  "🔥 Главный бэнгер этой недели:",
-  "⚡ Этот трек разнесет все чарты:",
-  "🖤 Новый звук, который ты ждал:",
-  "💎 Чистый кач и мощный вайб:",
-  "🌪️ Трек, от которого мурашки:"
-];
-
-const EN_SLANG_INTROS = [
-  "🔥 Pure fire on repeat:",
-  "⚡ Absolute chart-breaker:",
-  "🖤 The vibe is unmatched:",
-  "💎 Fresh drop you need right now:",
-  "🌪️ Heavy rotation material:"
-];
-
-const RU_HASHTAGS = ["новинки", "музыка", "трек", "премьера", "хит", "звук", "рэп", "поп", "чарт", "кач", "вайб"];
-const EN_HASHTAGS = ["newmusic", "track", "premiere", "hit", "vibes", "audio", "rap", "pop", "chart", "fire", "fresh"];
-
-function isRussian(text: string) {
-  return /[а-яёА-ЯЁ]/.test(text);
-}
-
-// API Routes
 app.get('/api/config', (req, res) => {
   res.json(loadConfig());
 });
@@ -124,29 +97,16 @@ app.get('/api/parse-channels', async (req, res) => {
       $('.tgme_widget_message').each((_, el) => {
         const postId = $(el).attr('data-post') || `${ch}_${Math.random()}`;
         const text = $(el).find('.tgme_widget_message_text').text().trim();
-        if (text) {
+        const hasAudio = $(el).find('audio, .tgme_widget_message_audio, .tgme_widget_message_voice').length > 0 || $(el).html()?.toLowerCase().includes('mp3');
+        if (text || hasAudio) {
           tracks.push({
             post_id: postId,
             channel: ch,
-            text,
-            is_ru: isRussian(text)
+            text: text || "[Аудио / Музыкальный файл без текста]",
+            has_audio: Boolean(hasAudio)
           });
         }
       });
-
-      if (tracks.length === 0) {
-        $('.message').each((_, el) => {
-          const text = $(el).text().trim();
-          if (text) {
-            tracks.push({
-              post_id: `${ch}_fallback_${Math.random()}`,
-              channel: ch,
-              text,
-              is_ru: isRussian(text)
-            });
-          }
-        });
-      }
 
       results.push({ channel: ch, success: true, count: tracks.length, tracks });
     } catch (err: any) {
@@ -158,10 +118,11 @@ app.get('/api/parse-channels', async (req, res) => {
 });
 
 app.post('/api/run-bot', async (req, res) => {
+  const cfg = loadConfig();
   const logs: string[] = [];
-  logs.push(`[${new Date().toISOString()}] Старт выполнения бота для каналов: ${SOURCES.join(', ')}`);
+  logs.push(`[${new Date().toISOString()}] Старт копирования реальных треков из каналов: ${SOURCES.join(', ')}`);
 
-  let allTracks: any[] = [];
+  let allPosts: any[] = [];
   for (const ch of SOURCES) {
     try {
       const resp = await fetch(`https://t.me/s/${ch}`, {
@@ -170,10 +131,14 @@ app.post('/api/run-bot', async (req, res) => {
       const html = await resp.text();
       const $ = cheerio.load(html);
       $('.tgme_widget_message').each((_, el) => {
+        const postId = $(el).attr('data-post') || '';
         const text = $(el).find('.tgme_widget_message_text').text().trim();
-        const postId = $(el).attr('data-post') || `${ch}_${Math.random()}`;
-        if (text) {
-          allTracks.push({ post_id: postId, channel: ch, text });
+        const hasAudio = $(el).find('audio, .tgme_widget_message_audio, .tgme_widget_message_voice').length > 0;
+        if (postId) {
+          const parts = postId.split('/');
+          if (parts.length === 2) {
+            allPosts.push({ post_id: postId, channel: parts[0], message_id: Number(parts[1]), text, hasAudio });
+          }
         }
       });
     } catch (e: any) {
@@ -181,41 +146,41 @@ app.post('/api/run-bot', async (req, res) => {
     }
   }
 
-  if (allTracks.length === 0) {
-    logs.push(`[Внимание] Треки не найдены в Telegram предпросмотрах. Используем резервный пул горячих релизов (@leaksffm)...`);
-    allTracks = [
-      { post_id: "fallback_pharaoh_2026", channel: "leaksffm", text: "PHARAOH - Новый неизданный трек (Snippet Leak 2026) #новинки #leaksffm" },
-      { post_id: "fallback_ogbuda_2026", channel: "leaksffm", text: "OG Buda & Mayot - Demo Session Freestyle #хит #новинки" },
-      { post_id: "fallback_scarlxrd_2026", channel: "leaksffm", text: "Scarlxrd - Dark Metal ID #newmusic #track" }
-    ];
-  }
-
-  const selected = allTracks.slice(0, 3);
+  allPosts.sort((a, b) => (b.hasAudio ? 1 : 0) - (a.hasAudio ? 1 : 0));
+  const selected = allPosts.slice(0, 3);
   const published: any[] = [];
 
-  for (const t of selected) {
-    const isRu = isRussian(t.text);
-    const intro = isRu 
-      ? RU_SLANG_INTROS[Math.floor(Math.random() * RU_SLANG_INTROS.length)]
-      : EN_SLANG_INTROS[Math.floor(Math.random() * EN_SLANG_INTROS.length)];
-    
-    const tagPool = isRu ? RU_HASHTAGS : EN_HASHTAGS;
-    const shuffledTags = [...tagPool].sort(() => 0.5 - Math.random()).slice(0, 5);
-    const tagsStr = shuffledTags.map(tag => `#${tag}`).join(' ');
-
-    const cover = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1200&fm=jpg";
-    const caption = `${intro}\n\n<b>${t.text.substring(0, 250)}</b>\n\n🎧 Слушай на повторе!\n\n${tagsStr}`;
-
-    logs.push(`[Успех] Обработан трек (${t.channel}): ${t.text.substring(0, 50)}...`);
-    
-    const entry = `${t.post_id},${new Date().toISOString()}\n`;
+  for (const p of selected) {
+    logs.push(`[Успех] Найден реальный трек в @${p.channel} (ID: ${p.message_id}). Готов к копированию.`);
+    const entry = `${p.post_id},${new Date().toISOString()}\n`;
     fs.appendFileSync(STATE_CSV, entry, 'utf-8');
 
+    if (cfg.telegram_bot_token && cfg.telegram_channel_id) {
+      try {
+        const copyRes = await fetch(`https://api.telegram.org/bot${cfg.telegram_bot_token}/copyMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: cfg.telegram_channel_id,
+            from_chat_id: `@${p.channel}`,
+            message_id: p.message_id
+          })
+        });
+        const copyData = await copyRes.json();
+        if (copyData.ok) {
+          logs.push(`✅ Успешно скопировано в ${cfg.telegram_channel_id}!`);
+        } else {
+          logs.push(`❌ Ошибка Telegram copyMessage: ${JSON.stringify(copyData)}`);
+        }
+      } catch (err: any) {
+        logs.push(`❌ Ошибка запроса copyMessage: ${err.message}`);
+      }
+    }
+
     published.push({
-      post_id: t.post_id,
-      channel: t.channel,
-      caption,
-      cover
+      post_id: p.post_id,
+      channel: p.channel,
+      text: p.text
     });
   }
 
@@ -223,31 +188,43 @@ app.post('/api/run-bot', async (req, res) => {
 });
 
 app.post('/api/test-telegram', async (req, res) => {
-  const { bot_token, channel_id, caption, photo_url } = req.body;
+  const { bot_token, channel_id } = req.body;
   if (!bot_token || !channel_id) {
     return res.status(400).json({ success: false, error: "Не указан токен бота или ID канала" });
   }
 
   try {
-    const tgUrl = `https://api.telegram.org/bot${bot_token}/sendPhoto`;
-    const resp = await fetch(tgUrl, {
+    // Test copying a message from @leaksffm
+    const testResp = await fetch(`https://t.me/s/leaksffm`);
+    const html = await testResp.text();
+    const $ = cheerio.load(html);
+    let samplePostId = "";
+    $('.tgme_widget_message').each((_, el) => {
+      const pid = $(el).attr('data-post');
+      if (pid && !samplePostId) samplePostId = pid;
+    });
+
+    if (!samplePostId) {
+      return res.status(400).json({ success: false, error: "Не удалось найти тестовый пост в @leaksffm" });
+    }
+
+    const parts = samplePostId.split('/');
+    const copyRes = await fetch(`https://api.telegram.org/bot${bot_token}/copyMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: channel_id,
-        photo: photo_url || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1200&fm=jpg",
-        caption: caption || "🔥 Тестовый пост из Telegram Music Bot Dashboard",
-        parse_mode: "HTML"
+        from_chat_id: `@${parts[0]}`,
+        message_id: Number(parts[1])
       })
     });
-    const data = await resp.json();
+    const data = await copyRes.json();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Vite middleware integration for dev
 async function startServer() {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({

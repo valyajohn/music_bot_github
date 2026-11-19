@@ -499,10 +499,27 @@ export default function App() {
 
           {activeTab === 'guide' && (
             <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-violet-400" />
+                    Готовый ZIP-архив для GitHub
+                  </h3>
+                  <p className="text-sm text-slate-400">Скачайте архив со всеми скриптами, конфигурацией и GitHub Actions воркфлоу.</p>
+                </div>
+                <a
+                  href="/music_bot_github.zip"
+                  download="music_bot_github.zip"
+                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-emerald-600/20 transition-all text-center justify-center"
+                >
+                  📥 Скачать ZIP архив
+                </a>
+              </div>
+
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <FileText className="w-5 h-5 text-violet-400" />
-                  Инструкция по запуску music_bot.py на вашем сервере
+                  Инструкция по запуску music_bot.py
                 </h3>
                 <p className="text-sm text-slate-400">Как запустить скрипт локально или настроить автозапуск 24/7.</p>
               </div>
