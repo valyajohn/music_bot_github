@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Music Bot Dashboard",
+  "description": "Telegram music bot parser and management dashboard for channels like @leaksffm and #новинки.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
