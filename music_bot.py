@@ -127,7 +127,7 @@ def main():
     
     # Check all sources
     for s in SOURCES:
-        log( сканирование источника: @{s} ...)
+        log(f"Сканирование источника: @{s}...")
         posts = fetch_track_posts_from_telegram(s)
         all_posts.extend(posts)
         time.sleep(1)
